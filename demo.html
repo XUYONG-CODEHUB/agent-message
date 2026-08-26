@@ -1,0 +1,123 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Agent 消息组件 · 最小接入示例</title>
+<link rel="stylesheet" href="agent-message.css">
+<style>
+  /* 最小壳层：只提供主题变量 + 列表容器，演示组件开箱即用 */
+  :root {
+    --bg-0: #07080f; --bg-1: #0c0e1c; --bg-2: #12152a;
+    --glass: rgba(255,255,255,0.04); --glass-strong: rgba(255,255,255,0.07);
+    --border: rgba(255,255,255,0.09); --border-strong: rgba(255,255,255,0.16);
+    --text-1: #eceef7; --text-2: #aab0c6; --text-3: #6d7490;
+    --accent-1: #7c6aff; --accent-2: #38bdf8; --accent-3: #f472b6;
+    --grad: linear-gradient(135deg, #7c6aff 0%, #38bdf8 55%, #2dd4bf 100%);
+    --grad-user: linear-gradient(135deg, #6366f1, #8b5cf6);
+    --ok: #34d399; --warn: #fbbf24; --err: #f87171;
+    --mono: 'Cascadia Code','JetBrains Mono','SF Mono',Consolas,monospace;
+    --sans: -apple-system,BlinkMacSystemFont,'Segoe UI','PingFang SC','Microsoft YaHei','Noto Sans SC',sans-serif;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { height: 100%; font-family: var(--sans); background: var(--bg-0); color: var(--text-1); }
+  body { display: flex; flex-direction: column; max-width: 760px; margin: 0 auto; padding: 20px; gap: 14px; }
+  h1 { font-size: 16px; font-weight: 700; }
+  .chat-list { flex: 1; min-height: 0; overflow-y: auto; border: 1px solid var(--border); border-radius: 16px; padding: 18px; background: rgba(10,12,24,0.55); }
+  button { font: 500 13px var(--sans); color: #fff; background: var(--grad); border: none; border-radius: 10px; padding: 9px 16px; cursor: pointer; }
+</style>
+</head>
+<body>
+  <h1>Agent 消息组件 · 最小接入示例</h1>
+  <div class="chat-list" id="chatList"></div>
+  <button id="runBtn" type="button">运行一次示例</button>
+
+  <script src="liquid-orb.js"></script>
+  <script src="agent-message.js"></script>
+  <script>
+  (function () {
+    'use strict';
+    var listEl = document.getElementById('chatList');
+    var runBtn = document.getElementById('runBtn');
+
+    var running = false;
+
+    // 实例化渲染组件。可选 opts.text 覆盖默认文案（取消注释即用英文前缀）。
+    // onRegenerate / onRetry：演示「重新生成 / 工具重试」——删掉本轮再重跑一遍 stub。
+    var chat = new AgentChat(listEl, {
+      toast: function (m) { console.log('[toast]', m); },
+      onRegenerate: function (round) { if (!running) { chat.removeRound(round); runStub(); } },
+      onRetry: function (round) { if (!running) { chat.removeRound(round); runStub(); } }
+      // text: { callBuiltin: 'Invoke tool' }
+    });
+
+    var n = 0;
+    function id(p) { return p + '-' + (++n); }
+
+    // —— stub 生产者：模拟一轮「思考 → 工具 → 回答」，直接 emit 组件消息 ——
+    function runStub() {
+      if (running) return;
+      running = true;
+      chat.enqueue({ id: id('u'), senderId: 'me', type: 'text', content: '帮我看看 /tmp 目录里有什么文件', time: '10:00 AM', isSelf: true });
+
+      var tid = id('th');
+      chat.enqueue({ id: tid, senderId: 'agent', type: 'thinking', content: '', time: '10:00 AM', isSelf: false,
+        thinking: { text: '', fullText: '', status: 'thinking' } });
+
+      var thinkText = '用户想看 /tmp 目录的内容，我需要调用 list 工具列目录。';
+      var i = 0;
+      (function typeThink() {
+        if (i >= thinkText.length) {
+          chat.enqueue({ id: tid, senderId: 'agent', type: 'thinking', content: '', time: '10:00 AM', isSelf: false,
+            thinking: { text: thinkText, fullText: thinkText, status: 'done' } });
+          runTool();
+          return;
+        }
+        i += 2;
+        var partial = thinkText.slice(0, i);
+        chat.enqueue({ id: tid, senderId: 'agent', type: 'thinking', content: '', time: '10:00 AM', isSelf: false,
+          thinking: { text: partial, fullText: partial, status: 'thinking' } });
+        setTimeout(typeThink, 40);
+      })();
+
+      function runTool() {
+        var tcid = 'tc-demo';
+        var toolCallId = 'demo-call';
+        chat.enqueue({ id: tcid, senderId: 'agent', type: 'toolCall', content: '', time: '10:00 AM', isSelf: false,
+          toolCall: { toolCallId: toolCallId, toolName: 'list', toolType: 'builtin', args: { path: '/tmp' }, status: 'running', summary: '' } });
+
+        setTimeout(function () {
+          var resultText = 'a.txt\nb.log\ncache/\n';
+          chat.enqueue({ id: tcid, senderId: 'agent', type: 'toolCall', content: '', time: '10:00 AM', isSelf: false,
+            toolCall: { toolCallId: toolCallId, toolName: 'list', toolType: 'builtin', args: { path: '/tmp' }, status: 'done', summary: '列出了 3 项', resultText: resultText } });
+          chat.enqueue({ id: id('tr'), senderId: 'agent', type: 'toolResult', content: '', time: '10:00 AM', isSelf: false,
+            toolResult: { toolCallId: toolCallId, toolName: 'list', content: resultText } });
+          runAnswer(resultText);
+        }, 700);
+      }
+
+      function runAnswer(resultText) {
+        var aid = id('a');
+        var answer = '## /tmp 目录内容\n\n' + resultText.split('\n').filter(Boolean).map(function (f) { return '- `' + f + '`'; }).join('\n') + '\n\n共 3 项。';
+        chat.enqueue({ id: aid, senderId: 'agent', type: 'text', content: '', time: '10:00 AM', isSelf: false });
+        var j = 0;
+        (function typeAnswer() {
+          if (j >= answer.length) {
+            chat.enqueue({ id: id('sum'), senderId: 'agent', type: 'agentSummary', content: '', time: '10:00 AM', isSelf: false,
+              agentSummary: { taskCount: 1, durationMs: 800 } });
+            chat.completeCurrentRound();
+            running = false;
+            return;
+          }
+          j += 3;
+          chat.enqueue({ id: aid, senderId: 'agent', type: 'text', content: answer.slice(0, j), time: '10:00 AM', isSelf: false });
+          setTimeout(typeAnswer, 20);
+        })();
+      }
+    }
+
+    runBtn.addEventListener('click', runStub);
+  })();
+  </script>
+</body>
+</html>
